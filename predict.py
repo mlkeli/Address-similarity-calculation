@@ -11,8 +11,8 @@ class Trainer():
     def __init__(self, model_path):
         # 加载预训练模型的权重并移至 CPU
         self.model = BertModel()
-        state_dict = torch.load(model_path, map_location='cpu')
-        self.model.load_state_dict(state_dict)
+        checkpoint = torch.load(model_path, map_location='cpu')
+        self.model.load_state_dict(checkpoint['model'],strict=False)
         self.model.eval()
 
         bert_tokenizer = BertTokenizer.from_pretrained('bert-base-chinese', do_lower_case=True)
@@ -27,7 +27,8 @@ class Trainer():
                 batch_seqs, batch_seq_masks, batch_seq_segments, batch_labels = data
                 seqs, masks, segments, labels = batch_seqs, batch_seq_masks, batch_seq_segments, batch_labels
                 loss, logits, probabilities = self.model(seqs, masks, segments, labels)
-                print(probabilities)
+                pre = torch.argmax(probabilities,dim=1)
+                print(pre)
 
 if __name__ == "__main__":
     model_path = "model/best.pth.tar"  # 替换为你的.pth.tar模型文件路径
