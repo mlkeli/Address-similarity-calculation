@@ -21,12 +21,12 @@ class BertModel(nn.Module):
 class BertModelTest(nn.Module):
     def __init__(self):
         super(BertModelTest, self).__init__()
-        config = BertConfig.from_pretrained('models/config.json')
-        self.bert = BertForSequenceClassification(config)  # /bert_pretrain/
+        self.bert = BertForSequenceClassification.from_pretrained("bert-base-chinese", num_labels = 2)  # /bert_pretrain/
         self.device = torch.device("cuda")
 
-    def forward(self, batch_seqs, batch_seq_masks, batch_seq_segments, labels):
-        loss, logits = self.bert(input_ids = batch_seqs, attention_mask = batch_seq_masks, 
-                              token_type_ids=batch_seq_segments, labels = labels)
+    def forward(self, batch_seqs, batch_seq_masks, batch_seq_segments):
+        output = self.bert(input_ids = batch_seqs, attention_mask = batch_seq_masks, 
+                              token_type_ids=batch_seq_segments)
+        logits = output['logits']
         probabilities = nn.functional.softmax(logits, dim=-1)
-        return loss, logits, probabilities
+        return logits, probabilities
