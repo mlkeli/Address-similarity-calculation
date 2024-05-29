@@ -22,7 +22,7 @@ class Trainer():
 
     def test(self):
         tbar = tqdm(self.dev_loader)
-        with torch.no_grad():S
+        with torch.no_grad():
             for batch_idx, data in tqdm(enumerate(tbar)):
                 batch_seqs, batch_seq_masks, batch_seq_segments, batch_labels = data
                 seqs, masks, segments, labels = batch_seqs, batch_seq_masks, batch_seq_segments, batch_labels
