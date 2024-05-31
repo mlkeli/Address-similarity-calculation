@@ -6,61 +6,64 @@ from model import BertModelTest
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import jieba
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 class TextSimilarityEvaluator:
     def __init__(self, model_name='bert-base-chinese'):
         self.tokenizer = BertTokenizer.from_pretrained(model_name)
         self.model = BertModelTest()
-        checkpoint = torch.load("model/best.pth.tar", map_location='cpu')
-        self.model.load_state_dict(checkpoint['model'],strict=False)
+        checkpoint = torch.load("/kaggle/input/model-similar/best.pth.tar", map_location='cpu')
+        self.model.load_state_dict(checkpoint['model'], strict=False)
         self.model.eval()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.max_seq_len = 102
         self.bert_tokenizer = BertTokenizer.from_pretrained('bert-base-chinese', do_lower_case=True)
-    def read_text_data(self,file_path):
+        self.tfidf_vectorizer = TfidfVectorizer()
+        self.R = 6371  # 地球半径，单位为公里
+
+    def read_text_data(self, file_path):
         texts = []
-        Lon_lat = []
+        lon_lat = []
+        with open(file_path, 'r', encoding='utf-8') as file:
+            for line in file:
+                parts = line.split('\t')
+                text = parts[0]
+                longitude, latitude = float(parts[1]), float(parts[2])
+                texts.append(text)
+                lon_lat.append((longitude, latitude))
+        return texts, lon_lat
+
+    def read_text(self,file_path):
+        texts = []
+        Lon = []
+        lat = []
         with open(file_path, 'r', encoding='utf-8') as file:
             for line in file:
                 text = line.split('\t')[0]  # 假设每行文本以制表符分隔，并且我们只取第一列
                 Longitude = line.split('\t')[1]
                 Latitude = line.split('\t')[2]
                 texts.append(text)
-                Lon_lat.append((Longitude,Latitude))
+                Lon.append(Longitude)
+                lat.append(Latitude)
 
-        return texts, Lon_lat
+        return texts, Lon, lat
 
-    def calculate_similarity(self,query, texts):
-        # 分词并合并查询文本和文本列表
+    def calculate_similarity(self, query, texts):
         all_texts = [" ".join(jieba.lcut(text)) for text in [query] + texts]
-
-        # 创建TF-IDF向量化器
-        tfidf_vectorizer = TfidfVectorizer()
-
-        # 计算TF-IDF权重
-        tfidf_matrix = tfidf_vectorizer.fit_transform(all_texts)
-
-        # 计算余弦相似度
+        tfidf_matrix = self.tfidf_vectorizer.fit_transform(all_texts)
         similarity_matrix = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])
-
-        # 提取查询文本与其他文本的相似度
         query_similarity = similarity_matrix.flatten()
-
         return query_similarity
-    
-    def calculate_distance(self,lat1, lon1, lat2, lon2):
-        R = 6371  # 地球半径，单位为公里
+
+    def calculate_distance(self, lat1, lon1, lat2, lon2):
         d_lat = math.radians(lat2 - lat1)
         d_lon = math.radians(lon2 - lon1)
         a = math.sin(d_lat/2) * math.sin(d_lat/2) + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(d_lon/2) * math.sin(d_lon/2)
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-        distance = R * c
+        distance = self.R * c
         return distance
 
-    def calculate_score(self,lat, lon, points):
+    def calculate_score(self, lat, lon, points):
         scores = []
         total_distance = 0
         for point in points:
@@ -72,48 +75,50 @@ class TextSimilarityEvaluator:
             scores.append(score)
         return scores
 
-    def calculate_similarity_score(self, tokens_seq_1, tokens_seq_2_list,score_list):
+    def calculate_similarity_score(self, tokens_seq_1, tokens_seq_2_list, score_list):
         with torch.no_grad():
             max_score = -float('inf')
             best_tokens_seq_2 = None
 
-            for i in range(min(len(tokens_seq_2_list), len(score_list))):
-                tokens_seq_2 = tokens_seq_2_list[i]
-                similar_score = score_list[i]
+            for tokens_seq_2, similar_score in zip(tokens_seq_2_list, score_list):
                 tokens_seq_1_ids = self.bert_tokenizer.tokenize(tokens_seq_1)
                 tokens_seq_2_ids = self.bert_tokenizer.tokenize(tokens_seq_2)
-                data = DataPrecessForSentence.trunate_and_pad(self,tokens_seq_1_ids,tokens_seq_2_ids)
+                data = DataPrecessForSentence.trunate_and_pad(self, tokens_seq_1_ids, tokens_seq_2_ids)
                 seq, seq_mask, seq_segment = data
-                seq = torch.tensor([seq], dtype=torch.long)  # Specify the data type as Long
-                seq_mask = torch.tensor([seq_mask], dtype=torch.long)  # Specify the data type as Long
-                seq_segment = torch.tensor([seq_segment], dtype=torch.long)
+                seq = torch.tensor([seq], dtype=torch.long).to(self.device)
+                seq_mask = torch.tensor([seq_mask], dtype=torch.long).to(self.device)
+                seq_segment = torch.tensor([seq_segment], dtype=torch.long).to(self.device)
                 logits, probabilities = self.model(seq, seq_mask, seq_segment)
                 score = probabilities[:, 1].cpu().numpy()
-                score = score + similar_score*50
-                print(score)
-                
+                score = score + similar_score * 60
+
                 if score > max_score:
                     max_score = score
                     best_tokens_seq_2 = tokens_seq_2
-            
+
             return max_score, best_tokens_seq_2
 
-# Example usage
+from tqdm import tqdm  # Import tqdm library
+
 if __name__ == '__main__':
     evaluator = TextSimilarityEvaluator()
-    tokens_seq_1 = "万和宾馆"
-    input_lon = 98.272827
-    input_lat = 39.792814
-    address = 'data/address.txt'
-    texts, lon_lat = evaluator.read_text_data(address)
-    sims = evaluator.calculate_similarity(tokens_seq_1, texts)
+    text_file = '/kaggle/input/test0531/test.txt'
+    tokens_seq_1_list, input_lon_list, input_lat_list = evaluator.read_text(text_file)
+    best_tokens_seq_2_list = []
+    for tokens_seq_1, input_lon, input_lat in tqdm(zip(tokens_seq_1_list, input_lon_list, input_lat_list), total=len(tokens_seq_1_list), desc="Processing"):  # Wrap the loop with tqdm
+        address = '/kaggle/input/address/address.txt'
+        texts, lon_lat = evaluator.read_text_data(address)
+        sims = evaluator.calculate_similarity(tokens_seq_1, texts)
 
-    top_20_similar_texts = sorted(enumerate(sims), key=lambda item: -item[1])[:20]
-    similar_texts = [texts[index] for index, _ in top_20_similar_texts]
-    similar_lon_lat = [lon_lat[index] for index, _ in top_20_similar_texts]
-    score_list = evaluator.calculate_score(float(input_lon), float(input_lat), similar_lon_lat)
+        top_60_similar_texts = sorted(enumerate(sims), key=lambda item: -item[1])[:60]
+        similar_texts = [texts[index] for index, _ in top_60_similar_texts]
+        similar_lon_lat = [lon_lat[index] for index, _ in top_60_similar_texts]
+        score_list = evaluator.calculate_score(float(input_lon), float(input_lat), similar_lon_lat)
 
-    max_score, best_tokens_seq_2 = evaluator.calculate_similarity_score(tokens_seq_1, similar_texts,score_list)
-    
-    print(f"最高得分: {max_score}")
-    print(f"对应的tokens_seq_2: {best_tokens_seq_2}")
+        max_score, best_tokens_seq_2 = evaluator.calculate_similarity_score(tokens_seq_1, similar_texts, score_list)
+        best_tokens_seq_2_list.append(best_tokens_seq_2) 
+
+    output_file = '/kaggle/working/output.txt'
+    with open(output_file, 'w') as file:
+        for item in best_tokens_seq_2_list:
+            file.write("%s\n" % item)
